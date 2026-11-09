@@ -472,7 +472,7 @@ function makeCar(type,color){
   g.traverse(o=>{if(o.isMesh)o.castShadow=(o.material!==gl&&o!==sh2)});scene.add(g);return g;
 }
 const cars=[];
-function addCar(x,z,h,o){const ty=types[Math.floor(rand()*types.length)],c={x,z,h,speed:0,hp:100,cool:0,sm:0,T:CT[ty],ai:false,mesh:makeCar(ty,ty==='taxi'?0xf2c12e:cols[Math.floor(rand()*cols.length)]),...o};if(c.ai)c.mesh.userData.drv.visible=true;c.mesh.position.set(x,0,z);c.mesh.rotation.y=h;cars.push(c);return c}
+function addCar(x,z,h,o){const ty=o.tipo||types[Math.floor(rand()*types.length)],c={x,z,h,speed:0,hp:100,cool:0,sm:0,T:CT[ty],ai:false,mesh:makeCar(ty,o.color||(ty==='taxi'?0xf2c12e:cols[Math.floor(rand()*cols.length)])),...o};if(c.ai)c.mesh.userData.drv.visible=true;c.mesh.position.set(x,0,z);c.mesh.rotation.y=h;cars.push(c);return c}
 // Tráfico
 for(let i=0;i<24;i++){
   const axis=rand()<.5?0:1,sign=rand()<.5?1:-1,ri=Math.floor(rand()*(N+1)),j=Math.floor(rand()*N),t=rr(R[j]+16,R[j+1]-16);
@@ -621,7 +621,7 @@ function loop(now){
   // Coches
   for(const c of cars){
     if(c===inCar)driveUpdate(c,dt);
-    else if(c.ai)aiUpdate(c,dt);
+    else if(c.ai)aiUpdate(c,dt);else if(c.pol&&estr>0)polDrive(c,dt);
     else c.speed-=Math.sign(c.speed)*Math.min(Math.abs(c.speed),4*dt);
     carPhysics(c,dt);
   }
@@ -724,7 +724,7 @@ function danoCoche(c,dt){
 }
 function alarmar(x,z){for(const q of peds){if(Math.hypot(q.x-x,q.z-z)<20){q.sp0=q.sp0||q.sp;q.sp=q.sp0*2.4;q.pan=7}}}
 function golpearPed(c,imp,nx,nz,k){
-  if(c.down>0)return;efecto(c.x,1.2,c.z,'sangre',8);snd('crash');alarmar(c.x,c.z);if(k)k.hp-=imp*.2;
+  if(c.down>0)return;if(k&&k===inCar)crimen(imp>10?2:1);efecto(c.x,1.2,c.z,'sangre',8);snd('crash');alarmar(c.x,c.z);if(k)k.hp-=imp*.2;
   c.vx=nx*imp*.8;c.vz=nz*imp*.8;c.m.g.rotation.x=-Math.PI/2;shake=Math.max(shake,.25);
   if(imp>10){c.dead=true;c.down=9}else c.down=2.5}
 // ======================= SHOOTER =======================
@@ -787,7 +787,7 @@ function rayNpc(o,d,maxT,tmin){ // cilindro vertical por cada NPC vivo
 }
 function herirNpc(e,dmg,nx,nz,head){
   if(e.estado!==undefined){herirEnemigo(e,dmg);return e.hp<=0}
-  e.hp-=dmg;efecto(e.x,head?2.3:1.4,e.z,'sangre',head?9:5);alarmar(e.x,e.z);
+  crimen(e.hp-dmg<=0?1.5:.5);e.hp-=dmg;efecto(e.x,head?2.3:1.4,e.z,'sangre',head?9:5);alarmar(e.x,e.z);
   if(e.hp<=0){e.dead=true;e.down=9;e.vx=nx*3;e.vz=nz*3;e.m.g.rotation.x=-Math.PI/2;return true}return false}
 function trazo3(a,b){ // línea de luz en 3D
   const L=a.distanceTo(b),m=new THREE.Mesh(new THREE.BoxGeometry(.05,.05,L),new THREE.MeshBasicMaterial({color:0xffe08a}));
@@ -841,7 +841,7 @@ function recibirDano(c){ // resta vida al jugador
   if(c>0){flash=1;shake=Math.max(shake,clamp(c/18,.15,.8));snd("hit")}
   salud=Math.max(0,salud-c); // resta sin bajar de 0
   if(salud<=0){ // si muere...
-    salud=VIDA_MAX; // ...revive con la vida llena
+    salud=VIDA_MAX;heat=0; // ...revive con la vida llena
     if(inCar){inCar.mesh.userData.drv.visible=false;inCar=null;pm.g.visible=true} // ...y se baja del coche si iba en uno
     p.x=R[5]+6;p.z=-12; // ...en el punto de inicio
   }
@@ -883,7 +883,7 @@ function crearEnemigo(x,z){ // crea un enemigo en una posición
   enemigos.push({m,x,z,hp:50,estado:'patrulla',tx:x,tz:z,espera:0,cd:0,t:0,muerto:false}); // datos: vida, estado, destino, esperas
 }
 for(let i=0;i<10;i++)crearEnemigo(R[3+Math.floor(Math.random()*5)]+(Math.random()-.5)*16,(Math.random()-.5)*300); // 10 enemigos sobre calles cercanas
-function herirEnemigo(e,c){ // resta vida a un enemigo
+function herirEnemigo(e,c){if(e.pol&&!e.muerto)crimen(e.hp-c<=0?3:1.5); // resta vida a un enemigo
   e.hp-=c;efecto(e.x,1.4,e.z,"sangre",6);alarmar(e.x,e.z); // le quita vida
   if(e.hp<=0&&!e.muerto){ // si llegó a 0 y estaba vivo
     e.muerto=true; // lo marca como muerto
@@ -897,7 +897,7 @@ function actualizarEnemigos(dt){ // IA, se ejecuta en cada fotograma
     if(e.muerto)continue; // los muertos no hacen nada
     const dx=j.x-e.x,dz=j.z-e.z,dist=Math.hypot(dx,dz)||1; // vector y distancia hacia ti
     const ve=dist<VISION&&!hayPared(e.x,e.z,dx/dist,dz/dist,dist); // te ve si estás cerca y sin pared en medio
-    e.estado=!ve?'patrulla':(dist<RANGO?'atacar':'perseguir'); // elige el estado según lo que ve
+    e.estado=!ve?(e.pol&&estr>0?'perseguir':'patrulla'):(dist<RANGO?'atacar':'perseguir'); // elige el estado según lo que ve
     let vel=0,ang=e.m.g.rotation.y; // velocidad y dirección (por defecto, la actual)
     if(e.estado==='patrulla'){ // estado: patrullar
       e.espera-=dt; // cuenta el tiempo hasta cambiar de destino
@@ -966,7 +966,7 @@ function mirillaTick(){
   miraG+=(tg-miraG)*.3;miraEl.style.setProperty('--g',miraG.toFixed(1)+'px');
   miraEl.style.setProperty('--c',hitT>0?(hitK>1?'#ff3b3b':'#ffd23b'):'#fff');
 }
-function dibujarMunicion(){mpTick();mirillaTick(); // actualiza el panel, se llama en cada fotograma
+function dibujarMunicion(){mpTick();mirillaTick();polTick(); // actualiza el panel, se llama en cada fotograma
   const a=inv[actual]; // arma activa
   elArma.textContent=a.nombre; // muestra su nombre
   elBalas.textContent=a.balas; // balas en el cargador
@@ -1008,26 +1008,77 @@ document.getElementById('continuar').onclick=reanudar; // botón Continuar
 btnsHora.forEach(b=>b.addEventListener('click',()=>{horaMeta=parseFloat(b.dataset.hora);sincronizarHora()})); // botones Día / Tarde / Noche
 slHora.addEventListener('input',()=>{horaMeta=slHora.value/100;sincronizarHora()}); // deslizador: horas intermedias
 
-// ===== MULTIJUGADOR (WebRTC directo, misma WiFi, sin servidor) =====
-const mpEl=document.createElement('div');mpEl.style.cssText='position:fixed;right:16px;top:16px;z-index:99999;display:none;width:300px;background:#000c;color:#fff;font:13px sans-serif;padding:12px;border-radius:8px';
-mpEl.innerHTML='<b>Multijugador (misma WiFi)</b><br><button id="mpH">Crear sala</button> <button id="mpJ">Unirme</button> <button id="mpO">Continuar</button><br><small id="mpS">Desconectado</small><textarea id="mpT" rows="5" style="width:100%;margin-top:6px" placeholder="Código de sala"></textarea>';
+// ===== SISTEMA DE ESTRELLAS (búsqueda policial) =====
+const VERDE=0x44543a,UMBRAL=[0,1,4,8,13,20],POL_PIE=[0,2,3,4,6,8],POL_COCHE=[0,1,1,2,3,4];
+let heat=0,estr=0,heatT=0,spawnT=0,visto=false,estShown=-1,vistoShown=false;
+const estCss=document.createElement('style');estCss.textContent='#estrellas{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:5;display:none;gap:4px;font-size:30px;text-shadow:0 0 6px #000;pointer-events:none}#estrellas span{color:#ffffff35}#estrellas span.on{color:#ffd23b;text-shadow:0 0 10px #ffb300,0 0 2px #000}#estrellas.vis span.on{animation:estp .45s infinite alternate}@keyframes estp{to{opacity:.2}}';document.head.appendChild(estCss);
+const estEl=document.createElement('div');estEl.id='estrellas';document.body.appendChild(estEl);
+function crimen(v){heat=Math.min(heat+v,30);heatT=0}
+function crearPolicia(x,z){const m=makePlayer({shirt:0x4f6b3a,pants:0x2f3d27,hair:0x111111}),e={m,x,z,hp:60,estado:'perseguir',tx:x,tz:z,espera:0,cd:0,t:0,muerto:false,pol:true};pushOut(e,.5);enemigos.push(e)}
+function polCoche(x,z,h){const c=addCar(x,z,h,{tipo:'sedan',color:VERDE,pol:true,speed:12}),mt=c.mesh.children[0].material;mt.shininess=6;mt.specular.set(0x0a0a0a);
+  const T=c.T,y=.45+T.H+T.cH+.1,mk=k=>new THREE.Mesh(new THREE.BoxGeometry(.5,.14,.3),new THREE.MeshBasicMaterial({color:k})),a=mk(0xff2020),b=mk(0x2060ff);
+  a.position.set(-.3,y,T.cz);b.position.set(.3,y,T.cz);c.mesh.add(a,b);c.bar=[a,b];return c}
+function polDrive(c,dt){const j=jugadorPos(),dx=j.x-c.x,dz=j.z-c.z,d=Math.hypot(dx,dz);
+  c.h+=clamp(angDiff(c.h,Math.atan2(dx,dz)),-2.8*dt,2.8*dt);
+  c.speed+=clamp((d>16?24:(d>8?8:0))-c.speed,-30*dt,14*dt);
+  c.stuck=(Math.abs(c.speed)<2&&d>14)?(c.stuck||0)+dt:0;if(c.stuck>3||d>220)c.quitar=1}
+function limpiarPol(todo){
+  for(let i=enemigos.length-1;i>=0;i--){const e=enemigos[i];if(e.pol&&(todo||e.muerto&&!e.m.g.parent)){scene.remove(e.m.g);enemigos.splice(i,1)}}
+  for(let i=cars.length-1;i>=0;i--){const c=cars[i];if(c.pol&&(todo||c.quitar)){scene.remove(c.mesh);cars.splice(i,1)}}}
+function polTick(){
+  const n=performance.now(),dt=Math.min(.1,(n-(polTick.l||n))/1000);polTick.l=n;const j=jugadorPos();
+  let k=0;for(let i=1;i<6;i++)if(heat>=UMBRAL[i])k=i;estr=k;
+  visto=enemigos.some(e=>e.pol&&!e.muerto&&Math.hypot(e.x-j.x,e.z-j.z)<40)||cars.some(c=>c.pol&&Math.hypot(c.x-j.x,c.z-j.z)<40);
+  heatT+=dt;if(heat>0&&heatT>8&&!visto)heat=Math.max(0,heat-dt*1.2); // escapar de la vista baja la búsqueda
+  if(k===0){if(enemigos.some(e=>e.pol)||cars.some(c=>c.pol))limpiarPol(true)}
+  else{limpiarPol(false);spawnT-=dt;
+    if(spawnT<=0){spawnT=1.6;
+      if(enemigos.filter(e=>e.pol&&!e.muerto).length<POL_PIE[k]){const a=Math.random()*6.283,r=55+Math.random()*30;crearPolicia(j.x+Math.cos(a)*r,j.z+Math.sin(a)*r)}
+      if(cars.filter(c=>c.pol).length<POL_COCHE[k]){const ln=R.reduce((b,v)=>Math.abs(v-j.x)<Math.abs(b-j.x)?v:b,R[0]),dz=(Math.random()<.5?-1:1)*(70+Math.random()*30),zz=j.z+dz;
+        if(Math.abs(zz)<HALF)polCoche(ln+(dz>0?-4:4),zz,dz>0?Math.PI:0)}}}
+  const f=Math.floor(n/180)%2;for(const c of cars)if(c.pol&&c.bar){c.bar[0].material.color.set(f?0xff2020:0x300000);c.bar[1].material.color.set(f?0x000030:0x2060ff)}
+  if(k!==estShown||visto!==vistoShown){estShown=k;vistoShown=visto;estEl.style.display=k?'flex':'none';estEl.className=visto?'vis':'';estEl.innerHTML=[1,2,3,4,5].map(i=>'<span'+(i<=k?' class="on"':'')+'>★</span>').join('')}
+}
+
+// ===== MULTIJUGADOR v2 (WebRTC directo, misma WiFi) =====
+const mpCss=document.createElement('style');mpCss.textContent='#mpEl{position:fixed;right:18px;top:18px;z-index:99999;display:none;width:330px;background:linear-gradient(160deg,#10151ff2,#1b2433f2);color:#e8eef7;font:13px/1.4 system-ui,sans-serif;padding:16px;border-radius:14px;border:1px solid #ffffff22;box-shadow:0 12px 40px #000a}#mpEl h3{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px}#mpEl .dot{width:10px;height:10px;border-radius:50%;background:#6b7280}#mpEl .dot.w{background:#fbbf24}#mpEl .dot.ok{background:#34d399;box-shadow:0 0 8px #34d399}#mpEl .tabs{display:flex;gap:6px;margin:10px 0 0}#mpEl .tabs button{flex:1}#mpEl button{background:#2b3a55;color:#fff;border:1px solid #ffffff22;border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit}#mpEl button:hover{background:#3a4d70}#mpEl button.on{background:#2f6fed;border-color:#6ea0ff}#mpEl input,#mpEl textarea{width:100%;box-sizing:border-box;background:#0b0f16;color:#cfe0ff;border:1px solid #ffffff22;border-radius:8px;padding:7px;font:11px monospace;resize:none}#mpEl label{display:block;margin:10px 0 3px;color:#9fb0c8;font-size:12px}#mpEl .row{display:flex;gap:6px;margin-top:6px}#mpEl small{color:#9fb0c8}#mpChip{position:fixed;left:14px;top:14px;z-index:5;background:#000a;color:#7dffb4;padding:5px 11px;border-radius:20px;font:12px system-ui;display:none}';document.head.appendChild(mpCss);
+const mpEl=document.createElement('div');mpEl.id='mpEl';
+mpEl.innerHTML='<h3><span class="dot" id="mpDot"></span>Multijugador local</h3><label style="margin-top:4px">Tu nombre</label><input id="mpN" maxlength="14" value="Jugador"><div class="tabs"><button id="mpTa" class="on">Crear sala</button><button id="mpTb">Unirme</button></div>'+
+'<div id="mpA"><label>1. Envía este código a tu amigo</label><textarea id="mpC1" rows="3" readonly placeholder="Pulsa Generar"></textarea><div class="row"><button id="mpG" style="flex:1">Generar</button><button id="mpK1">Copiar</button></div><label>2. Pega su respuesta</label><textarea id="mpC2" rows="3"></textarea><div class="row"><button id="mpP2">Pegar</button><button id="mpX" style="flex:1">Conectar</button></div></div>'+
+'<div id="mpB" style="display:none"><label>1. Pega el código del anfitrión</label><textarea id="mpC3" rows="3"></textarea><div class="row"><button id="mpP3">Pegar</button><button id="mpR" style="flex:1">Generar respuesta</button></div><label>2. Envía esta respuesta al anfitrión</label><textarea id="mpC4" rows="3" readonly></textarea><div class="row"><button id="mpK4" style="flex:1">Copiar</button></div></div>'+
+'<p id="mpS" style="margin:10px 0 0"><small>Ambos deben estar en la misma WiFi.</small></p><button id="mpD" style="display:none;width:100%;margin-top:8px">Desconectar</button>';
 document.body.appendChild(mpEl);
-const mpS=t=>document.getElementById('mpS').textContent=t,mpT=document.getElementById('mpT');
+const mpChip=document.createElement('div');mpChip.id='mpChip';document.body.appendChild(mpChip);
+const mq=id=>document.getElementById(id);
+const mpSt=(t,k)=>{mq('mpS').innerHTML='<small>'+t+'</small>';mq('mpDot').className='dot '+(k||'')};
 const mpEnc=async s=>btoa(String.fromCharCode(...new Uint8Array(await new Response(new Blob([s]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer())));
 const mpDec=async b=>new Response(new Blob([Uint8Array.from(atob(b.trim()),c=>c.charCodeAt(0))]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
 const mpIce=pc=>new Promise(r=>{if(pc.iceGatheringState==='complete')return r();pc.onicegatheringstatechange=()=>pc.iceGatheringState==='complete'&&r();setTimeout(r,3000)});
+const mpCopiar=id=>{const t=mq(id);t.select();(navigator.clipboard?navigator.clipboard.writeText(t.value):Promise.reject()).catch(()=>document.execCommand('copy')).then(()=>mpSt('Copiado ✓','w'))};
+const mpPegar=id=>navigator.clipboard.readText().then(t=>{mq(id).value=t.trim()},()=>mpSt('El navegador bloqueó el pegado: usa Ctrl+V'));
 const mpAv=makePlayer({shirt:0x00e5ff});mpAv.g.visible=false;
-let mpD=null,mpPc=null,mpMode='',mpR=null,mpT0=0;
-function mpCanal(d){mpD=d;d.onopen=()=>{mpS('¡Conectado! Pulsa Esc para volver al juego');mpT.value=''};d.onclose=()=>{mpS('Desconectado');mpAv.g.visible=false};d.onmessage=e=>{mpR=JSON.parse(e.data)}}
-document.getElementById('mpH').onclick=async()=>{try{mpMode='host';mpPc=new RTCPeerConnection({iceServers:[]});mpCanal(mpPc.createDataChannel('g'));await mpPc.setLocalDescription(await mpPc.createOffer());mpS('Generando código...');await mpIce(mpPc);mpT.value=await mpEnc(JSON.stringify(mpPc.localDescription));mpS('1) Envía este código a tu amigo. 2) Pega aquí su respuesta y pulsa Continuar.')}catch(e){mpS('Error: '+e.message)}};
-document.getElementById('mpJ').onclick=()=>{mpMode='join';mpT.value='';mpS('Pega el código de la sala y pulsa Continuar.')};
-document.getElementById('mpO').onclick=async()=>{try{const sd=JSON.parse(await mpDec(mpT.value));
-  if(mpMode==='host'){await mpPc.setRemoteDescription(sd);mpS('Conectando...')}
-  else if(mpMode==='join'){mpPc=new RTCPeerConnection({iceServers:[]});mpPc.ondatachannel=e=>mpCanal(e.channel);await mpPc.setRemoteDescription(sd);await mpPc.setLocalDescription(await mpPc.createAnswer());mpS('Generando respuesta...');await mpIce(mpPc);mpT.value=await mpEnc(JSON.stringify(mpPc.localDescription));mpS('Envía este código de vuelta al anfitrión (te conectará solo).')}}catch(e){mpS('Código inválido: '+e.message)}};
+let mpD=null,mpPc=null,mpR=null,mpT0=0,mpNom='Amigo',mpInt=0,mpTag=null;
+function mpEtiq(n){const c=document.createElement('canvas');c.width=256;c.height=64;const x=c.getContext('2d');x.fillStyle='#000b';x.fillRect(8,8,240,48);x.fillStyle='#fff';x.font='bold 30px system-ui';x.textAlign='center';x.fillText(n,128,44);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));s.scale.set(2.6,.65,1);s.position.y=3.3;return s}
+function mpNombre(n){mpNom=n;if(mpTag)mpAv.g.remove(mpTag);mpTag=mpEtiq(n);mpAv.g.add(mpTag)}
+const mpSend=o=>{if(mpD&&mpD.readyState==='open')mpD.send(JSON.stringify(o))};
+function mpCanal(d){mpD=d;
+  d.onopen=()=>{mpSt('¡Conectado! Pulsa Esc para volver al juego.','ok');mq('mpD').style.display='block';mpSend({t:'h',n:mq('mpN').value||'Jugador'});mpChip.style.display='block';mpChip.textContent='● '+mpNom;mpInt=setInterval(()=>mpSend({t:'i',s:Date.now()}),2000)};
+  d.onclose=()=>{clearInterval(mpInt);mpAv.g.visible=false;mpAv.g.userData.i=0;mpR=null;mpChip.style.display='none';mq('mpD').style.display='none';mpSt('Desconectado','')};
+  d.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==='p')mpR=m;else if(m.t==='h')mpNombre(m.n);else if(m.t==='i')mpSend({t:'o',s:m.s});else if(m.t==='o')mpChip.textContent='● '+mpNom+' · '+(Date.now()-m.s)+' ms'}}
+const mpTab=a=>{mq('mpA').style.display=a?'':'none';mq('mpB').style.display=a?'none':'';mq('mpTa').className=a?'on':'';mq('mpTb').className=a?'':'on'};
+mq('mpTa').onclick=()=>mpTab(true);mq('mpTb').onclick=()=>mpTab(false);
+mq('mpK1').onclick=()=>mpCopiar('mpC1');mq('mpK4').onclick=()=>mpCopiar('mpC4');mq('mpP2').onclick=()=>mpPegar('mpC2');mq('mpP3').onclick=()=>mpPegar('mpC3');
+mq('mpG').onclick=async()=>{try{mpPc=new RTCPeerConnection({iceServers:[]});mpCanal(mpPc.createDataChannel('g'));await mpPc.setLocalDescription(await mpPc.createOffer());mpSt('Generando código...','w');await mpIce(mpPc);mq('mpC1').value=await mpEnc(JSON.stringify(mpPc.localDescription));mpSt('Envía el código a tu amigo y pega su respuesta abajo.','w')}catch(e){mpSt('Error: '+e.message)}};
+mq('mpX').onclick=async()=>{try{await mpPc.setRemoteDescription(JSON.parse(await mpDec(mq('mpC2').value)));mpSt('Conectando...','w')}catch(e){mpSt('Respuesta inválida. Si ya la usaste, genera la sala de nuevo.')}};
+mq('mpR').onclick=async()=>{try{const sd=JSON.parse(await mpDec(mq('mpC3').value));mpPc=new RTCPeerConnection({iceServers:[]});mpPc.ondatachannel=e=>mpCanal(e.channel);await mpPc.setRemoteDescription(sd);await mpPc.setLocalDescription(await mpPc.createAnswer());mpSt('Generando respuesta...','w');await mpIce(mpPc);mq('mpC4').value=await mpEnc(JSON.stringify(mpPc.localDescription));mpSt('Copia la respuesta y envíasela al anfitrión; se conectará solo.','w')}catch(e){mpSt('Código inválido: '+e.message)}};
+mq('mpD').onclick=()=>{if(mpD)mpD.close();if(mpPc)mpPc.close()};
+mpNombre('Amigo');
+addEventListener('keydown',e=>{if(e.code==='KeyM'&&document.pointerLockElement)document.exitPointerLock()}); // M abre el panel
 function mpTick(){
   if(!mpD||mpD.readyState!=='open'){mpAv.g.visible=false;return}
   const n=performance.now();
-  if(n-mpT0>50){mpT0=n;const j=jugadorPos();mpD.send(JSON.stringify({x:j.x,z:j.z,r:inCar?inCar.h:p.rot,a:(!inCar&&actual>0)?1:0}))}
+  if(n-mpT0>50){mpT0=n;const j=jugadorPos();mpSend({t:'p',x:j.x,z:j.z,r:inCar?inCar.h:p.rot,a:(!inCar&&actual>0)?1:0})}
   if(mpR){const g=mpAv.g;g.visible=true;if(!g.userData.i){g.position.set(mpR.x,0,mpR.z);g.userData.i=1}
     g.position.x+=(mpR.x-g.position.x)*.3;g.position.z+=(mpR.z-g.position.z)*.3;g.rotation.y=mpR.r;mpAv.aR.rotation.x=mpR.a?-1.4:0}
 }
