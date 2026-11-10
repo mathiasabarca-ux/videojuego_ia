@@ -52,7 +52,7 @@ canvas{display:block}
 </style>
 </head>
 <body>
-<div class="hud" id="help"><b>Ciudad Abierta 3D</b><br>WASD mover · Shift correr<br>Ratón / flechas: cámara<br><b>E</b> subir / bajar del vehículo<br>Espacio: freno de mano<br><b>N</b> día / noche · <b>Esc</b> pausa<br>Clic: disparar · <b>Clic der.</b>: apuntar · <b>R</b> recargar<br><b>1</b> desarmado · <b>2</b> pistola · <b>3</b> granada · <b>4</b> subfusil · rueda</div>
+<div class="hud" id="help"><b>Ciudad Abierta 3D</b><br>WASD mover · Shift correr<br>Ratón: cámara (desarmado) · mirilla libre (armado)<br><b>E</b> subir / bajar del vehículo<br>Espacio: freno de mano<br><b>N</b> día / noche · <b>Esc</b> pausa<br>Clic: disparar · <b>Clic der.</b> (mantener): apuntar con precisión · <b>R</b> recargar<br><b>1</b> desarmado · <b>2</b> pistola · <b>3</b> granada · <b>4</b> subfusil · rueda</div>
 <div class="hud" id="mmw"><canvas id="mm" width="150" height="150"></canvas></div>
 <div class="hud" id="speed"><span id="spv">0</span> <small>km/h</small></div>
 <div class="hud" id="prompt">Pulsa <b>E</b> para subir al vehículo</div>
@@ -500,7 +500,9 @@ function makePlayer(o={}){
   scene.add(g);return{g,lL,lR,aL,aR};
 }
 const pm=makePlayer(),p={x:R[5]+6,z:-12,rot:0};
-let inCar=null,walkT=0,yaw=0,pitch=.35,lastMouse=-9;
+let inCar=null,walkT=0,yaw=0,pitch=.35,lastMouse=-9,pY=0,pP=0,aimK=0; // pY/pP: giro pendiente del ratón (se reparte en varios fotogramas); aimK: 0..1 transición suave al apuntar
+const cur={x:0,y:0}; // cur: posición de la mirilla respecto al centro de la pantalla (píxeles)
+const modoMira=()=>!inCar&&inv[actual].tipo!=='nada'; // con arma en mano el ratón mueve la mirilla; desarmado o en coche mueve la cámara
 
 const skins=[0xf1c9a5,0xd9a679,0xb07d56,0x8a5a3c,0x5e3b26],shirts=[0xe74c3c,0x3498db,0xf1c40f,0x2ecc71,0x9b59b6,0xecf0f1,0xe67e22,0x1abc9c],pants=[0x2c3e75,0x333333,0x5d4a3a,0x6b6f76,0x1f2a44],hairs=[0x2b1b12,0x111111,0x6b4a2b,0xc9a24a,0x8a8a8a];
 const peds=[];
@@ -544,7 +546,15 @@ let drag=false;const cv=renderer.domElement,st=document.getElementById('start');
 st.onclick=()=>{st.style.display='none';cv.requestPointerLock&&cv.requestPointerLock()};
 cv.addEventListener('click',()=>{if(!document.pointerLockElement&&cv.requestPointerLock)cv.requestPointerLock()});
 cv.addEventListener('mousedown',()=>drag=true);addEventListener('mouseup',()=>drag=false);
-addEventListener('mousemove',e=>{if(!paused&&(document.pointerLockElement||drag)){yaw-=e.movementX*.003;pitch=clamp(pitch+e.movementY*.003,PMIN,1.3);lastMouse=performance.now()/1000}});
+addEventListener('mousemove',e=>{if(!paused&&(document.pointerLockElement||drag)){
+  let mx=clamp(e.movementX,-150,150),my=clamp(e.movementY,-150,150); // limita saltos bruscos del ratón
+  if(modoMira()&&!aimDown){ // armado: la mirilla se mueve libre dentro de una zona; si el ratón pasa del borde de la zona, gira la cámara
+    cur.x+=mx;cur.y+=my;const lx=innerWidth*.32,ly=innerHeight*.28;mx=my=0;
+    if(cur.x>lx){mx=cur.x-lx;cur.x=lx}else if(cur.x<-lx){mx=cur.x+lx;cur.x=-lx}
+    if(cur.y>ly){my=cur.y-ly;cur.y=ly}else if(cur.y<-ly){my=cur.y+ly;cur.y=-ly}
+  }
+  const sens=aimDown?.0019:.003; // con clic derecho la sensibilidad baja para apuntar con más precisión
+  pY-=mx*sens;pP+=my*sens;lastMouse=performance.now()/1000}});
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);if(comp)comp.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()});
 
 function aiUpdate(c,dt){
@@ -588,9 +598,11 @@ const fp={x:p.x,z:p.z};
 function loop(now){
   requestAnimationFrame(loop);
   const t=now/1000,dt=Math.min(.05,(loop.l?t-loop.l:.016));loop.l=t;
-  if(paused){actualizarLuz(dt);colocarSol(inCar||fp);if(comp)comp.render();else renderer.render(scene,cam);return} // en pausa: solo se actualiza la luz y se dibuja
+  if(paused){pY=pP=0;actualizarLuz(dt);colocarSol(inCar||fp);if(comp)comp.render();else renderer.render(scene,cam);return} // en pausa: solo se actualiza la luz y se dibuja
   if(keys.ArrowLeft)yaw+=1.8*dt;if(keys.ArrowRight)yaw-=1.8*dt;
   if(keys.ArrowUp)pitch=clamp(pitch-1.2*dt,PMIN,1.3);if(keys.ArrowDown)pitch=clamp(pitch+1.2*dt,PMIN,1.3);
+  {const k=1-Math.exp(-(aimDown?26:20)*dt),dy=pY*k,dp=pP*k;pY-=dy;pP-=dp;yaw+=dy;pitch=clamp(pitch+dp,PMIN,1.3); // el giro se reparte en varios fotogramas: movimiento fluido
+   if(modoMira()&&aimDown){const c=1-Math.exp(-16*dt);cur.x-=cur.x*c;cur.y-=cur.y*c}} // al apuntar la mirilla vuelve suavemente al centro
   // Subir / bajar
   if(pressedE){pressedE=false;
     if(inCar){const c=inCar;p.x=c.x+Math.cos(c.h)*3,p.z=c.z-Math.sin(c.h)*3;pushOut(p,.5);c.mesh.userData.drv.visible=false;inCar=null;pm.g.visible=true}
@@ -603,7 +615,7 @@ function loop(now){
     if(mx||mz){
       let dx=Math.sin(yaw)*mz-Math.cos(yaw)*mx,dz=Math.cos(yaw)*mz+Math.sin(yaw)*mx;const l=Math.hypot(dx,dz);dx/=l;dz/=l;
       const sp=keys.ShiftLeft?13:7;p.x+=dx*sp*dt;p.z+=dz*sp*dt;
-      p.rot+=angDiff(p.rot,Math.atan2(dx,dz))*(1-Math.exp(-14*dt));walkT+=dt*sp*(keys.ShiftLeft?.45:.75);
+      if(!(aimDown&&actual>0))p.rot+=angDiff(p.rot,Math.atan2(dx,dz))*(1-Math.exp(-14*dt));walkT+=dt*sp*(keys.ShiftLeft?.45:.75);
     }
     const sw=(mx||mz)?Math.sin(walkT)*(keys.ShiftLeft?.75:.55):0;
     pm.lL.rotation.x=sw;pm.lR.rotation.x=-sw;pm.aL.rotation.x=-sw;pm.aR.rotation.x=sw;
@@ -638,12 +650,13 @@ function loop(now){
   fp.x+=(p.x-fp.x)*Math.min(1,25*dt);fp.z+=(p.z-fp.z)*Math.min(1,25*dt);
   const f=inCar||fp,spd=inCar?inCar.speed:0;if(inCar&&pitch<.05)pitch=.05;
   if(inCar&&t-lastMouse>1.5)yaw+=angDiff(yaw,inCar.h)*Math.min(1,2.5*dt);
-  const aim=!inCar&&aimDown,dist=inCar?11:(aim?3.8:7),ty=inCar?1.6:(aim?1.9:1.8),so=aim?.85:0,rx=-Math.cos(yaw)*so,rz=Math.sin(yaw)*so,
+  const aim=!inCar&&aimDown;aimK+=((aim?1:0)-aimK)*(1-Math.exp(-10*dt));
+  const dist=inCar?11:7-3.2*aimK,ty=inCar?1.6:1.8+.1*aimK,so=inCar?0:.85*aimK,rx=-Math.cos(yaw)*so,rz=Math.sin(yaw)*so,
   cp={x:f.x+rx-Math.sin(yaw)*Math.cos(pitch)*dist,z:f.z+rz-Math.cos(yaw)*Math.cos(pitch)*dist};
   pushOut(cp,1.2);
   shake=Math.max(0,shake-dt*2.2);const sk=shake*shake*1.2;
   cam.position.set(cp.x+(Math.random()-.5)*sk,ty+Math.sin(pitch)*dist+.5+(Math.random()-.5)*sk,cp.z+(Math.random()-.5)*sk);if(cam.position.y<.6)cam.position.y=.6;cam.lookAt(f.x+rx,ty,f.z+rz);
-  cam.fov+=(((aim?44:62)+Math.abs(spd)*.35+shake*5)-cam.fov)*Math.min(1,6*dt);cam.updateProjectionMatrix();
+  cam.fov+=(((62-18*aimK)+Math.abs(spd)*.35+shake*5)-cam.fov)*Math.min(1,6*dt);cam.updateProjectionMatrix();
   actualizarLuz(dt);colocarSol(f); // luz y sombras según la hora del día
   sky.position.copy(cam.position);sg.position.copy(cam.position);stars.rotation.y+=dt*.003;cl.rotation.y+=dt*.002;
   // HUD
@@ -792,14 +805,17 @@ function herirNpc(e,dmg,nx,nz,head){
 function trazo3(a,b){ // línea de luz en 3D
   const L=a.distanceTo(b),m=new THREE.Mesh(new THREE.BoxGeometry(.05,.05,L),new THREE.MeshBasicMaterial({color:0xffe08a}));
   m.position.copy(a).add(b).multiplyScalar(.5);m.lookAt(b);scene.add(m);setTimeout(()=>scene.remove(m),55)}
+const _rc=new THREE.Raycaster(),_v2=new THREE.Vector2();
+function mirarDir(){ // dirección 3D que va de la cámara a través de la mirilla
+  _v2.set(cur.x/(innerWidth/2),-cur.y/(innerHeight/2));_rc.setFromCamera(_v2,cam);return _rc.ray.direction}
 function disparar(){ // se llama cuando pulsas el botón
   const a=inv[actual];
   if(inCar||a.tipo==='nada'||enfriar>0||a.balas<=0)return;
-  a.balas--;enfriar=a.cadencia;p.rot=yaw;
-  const dx=Math.sin(yaw),dz=Math.cos(yaw);
-  if(a.tipo==='granada')lanzarGranada(dx,dz);
+  a.balas--;enfriar=a.cadencia;
+  _d.copy(mirarDir());const hl=Math.hypot(_d.x,_d.z)||1,dx=_d.x/hl,dz=_d.z/hl;p.rot=Math.atan2(dx,dz); // el personaje mira hacia donde apunta la mirilla
+  if(a.tipo==='granada')lanzarGranada(dx,dz,6+clamp(_d.y,-.4,.9)*10);
   else{
-    cam.getWorldDirection(_d);_o.copy(cam.position);
+    _o.copy(cam.position);
     const tmin=(p.x-_o.x)*_d.x+(1.6-_o.y)*_d.y+(p.z-_o.z)*_d.z-.4,R0=a.alcance+20;
     let tw=R0,tipo='',tc=null;
     for(const b of colliders){const t=rayAABB(_o.x,_o.z,_d.x,_d.z,b);if(t>tmin&&t<tw){const y=_o.y+_d.y*t;if(y>-1&&y<40){tw=t;tipo='pared'}}}
@@ -830,7 +846,7 @@ addEventListener('mouseup',e=>{if(e.button===0)disparando=false}); // soltar el 
 function actualizarArmas(dt){ // se ejecuta en cada fotograma
   enfriar=Math.max(0,enfriar-dt); // la espera baja con el tiempo
   if(disparando)disparar(); // si mantienes el clic, intenta disparar
-  if(!inCar&&actual>0){pm.aR.rotation.x=-1.4+(pitch-.35)*.7;if(disparando||aimDown)p.rot=yaw} // brazo sigue la cámara libre // levanta el brazo para apuntar con el arma
+  if(!inCar&&actual>0){const d=mirarDir();pm.aR.rotation.x=-1.4+(-Math.asin(clamp(d.y,-1,1))-.35)*.7;if(disparando)p.rot=Math.atan2(d.x,d.z);else if(aimDown)p.rot+=angDiff(p.rot,Math.atan2(d.x,d.z))*(1-Math.exp(-18*dt))} // brazo sigue la cámara libre // levanta el brazo para apuntar con el arma
 }
 
 // ===== 2. DAÑO PROPIO =====
@@ -847,10 +863,10 @@ function recibirDano(c){ // resta vida al jugador
   }
 }
 const granadas=[]; // lista de granadas en el aire
-function lanzarGranada(dx,dz){ // crea una granada lanzada hacia delante
+function lanzarGranada(dx,dz,vy0){ // crea una granada lanzada hacia delante
   const m=new THREE.Mesh(new THREE.SphereGeometry(.2,8,6),lam(0x2f4f2f)); // esfera verde
   scene.add(m); // la añade a la escena
-  granadas.push({m,x:p.x,y:1.8,z:p.z,vx:dx*15,vy:6,vz:dz*15,t:2}); // posición, velocidad (hacia delante y arriba) y mecha de 2 s
+  granadas.push({m,x:p.x,y:1.8,z:p.z,vx:dx*15,vy:vy0===undefined?6:vy0,vz:dz*15,t:2}); // posición, velocidad (hacia delante y arriba) y mecha de 2 s
 }
 function actualizarGranadas(dt){ // mueve las granadas en cada fotograma
   for(let i=granadas.length-1;i>=0;i--){ // recorre la lista al revés para poder borrar
@@ -960,7 +976,8 @@ addEventListener('keydown',e=>{if(e.code==='KeyR')recargar()}); // tecla R: reca
 const elArma=document.getElementById('armaNombre'),elBalas=document.getElementById('balas'),elReserva=document.getElementById('reserva'); // busca los elementos
 const miraEl=document.getElementById('mira');let miraG=6;
 function mirillaTick(){
-  const a=inv[actual],ok=!inCar&&a.tipo!=='nada';miraEl.style.opacity=ok?1:0;if(!ok)return;
+  const a=inv[actual],ok=!inCar&&a.tipo!=='nada';miraEl.style.opacity=ok?1:0;if(!ok){cur.x=cur.y=0;return} // sin arma: mirilla oculta y centrada
+  const tr='translate('+cur.x.toFixed(1)+'px,'+cur.y.toFixed(1)+'px)';miraEl.style.transform=tr;hitEl.style.transform=tr; // la mirilla sigue al ratón
   const mov=(keys.KeyW||keys.KeyA||keys.KeyS||keys.KeyD)?(keys.ShiftLeft?9:4):0;
   const tg=(a.tipo==='granada'?16:5)+mov+(enfriar>0&&a.tipo==='bala'?Math.min(10,a.cadencia<.2?8:6):0)+(jy>0?6:0)-(aimDown?3:0)+(hitT>0?5:0);
   miraG+=(tg-miraG)*.3;miraEl.style.setProperty('--g',miraG.toFixed(1)+'px');
@@ -1040,14 +1057,19 @@ function polTick(){
   if(k!==estShown||visto!==vistoShown){estShown=k;vistoShown=visto;estEl.style.display=k?'flex':'none';estEl.className=visto?'vis':'';estEl.innerHTML=[1,2,3,4,5].map(i=>'<span'+(i<=k?' class="on"':'')+'>★</span>').join('')}
 }
 
-// ===== MULTIJUGADOR v2 (WebRTC directo, misma WiFi) =====
-const mpCss=document.createElement('style');mpCss.textContent='#mpEl{position:fixed;right:18px;top:18px;z-index:99999;display:none;width:330px;background:linear-gradient(160deg,#10151ff2,#1b2433f2);color:#e8eef7;font:13px/1.4 system-ui,sans-serif;padding:16px;border-radius:14px;border:1px solid #ffffff22;box-shadow:0 12px 40px #000a}#mpEl h3{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px}#mpEl .dot{width:10px;height:10px;border-radius:50%;background:#6b7280}#mpEl .dot.w{background:#fbbf24}#mpEl .dot.ok{background:#34d399;box-shadow:0 0 8px #34d399}#mpEl .tabs{display:flex;gap:6px;margin:10px 0 0}#mpEl .tabs button{flex:1}#mpEl button{background:#2b3a55;color:#fff;border:1px solid #ffffff22;border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit}#mpEl button:hover{background:#3a4d70}#mpEl button.on{background:#2f6fed;border-color:#6ea0ff}#mpEl input,#mpEl textarea{width:100%;box-sizing:border-box;background:#0b0f16;color:#cfe0ff;border:1px solid #ffffff22;border-radius:8px;padding:7px;font:11px monospace;resize:none}#mpEl label{display:block;margin:10px 0 3px;color:#9fb0c8;font-size:12px}#mpEl .row{display:flex;gap:6px;margin-top:6px}#mpEl small{color:#9fb0c8}#mpChip{position:fixed;left:14px;top:14px;z-index:5;background:#000a;color:#7dffb4;padding:5px 11px;border-radius:20px;font:12px system-ui;display:none}';document.head.appendChild(mpCss);
+// ===== MULTIJUGADOR v3 (código corto de sala, misma WiFi) =====
+// El anfitrión pulsa "Crear sala" y obtiene un código de 5 letras. El amigo lo escribe y se conectan solos.
+// El código solo sirve para que los dos se encuentren (servicio público ntfy.sh); el juego va directo por WiFi (WebRTC).
+const mpCss=document.createElement('style');mpCss.textContent=`#mpEl{position:fixed;right:18px;top:18px;z-index:99999;display:none;width:330px;max-height:92vh;overflow:auto;background:linear-gradient(160deg,#10151ff2,#1b2433f2);color:#e8eef7;font:13px/1.4 system-ui,sans-serif;padding:16px;border-radius:14px;border:1px solid #ffffff22;box-shadow:0 12px 40px #000a}#mpEl h3{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px}#mpEl .dot{width:10px;height:10px;border-radius:50%;background:#6b7280}#mpEl .dot.w{background:#fbbf24}#mpEl .dot.ok{background:#34d399;box-shadow:0 0 8px #34d399}#mpEl .tabs{display:flex;gap:6px;margin:10px 0 0}#mpEl .tabs button{flex:1}#mpEl button{background:#2b3a55;color:#fff;border:1px solid #ffffff22;border-radius:8px;padding:7px 10px;cursor:pointer;font:inherit}#mpEl button:hover{background:#3a4d70}#mpEl button.on{background:#2f6fed;border-color:#6ea0ff}#mpEl input,#mpEl textarea{width:100%;box-sizing:border-box;background:#0b0f16;color:#cfe0ff;border:1px solid #ffffff22;border-radius:8px;padding:7px;font:11px monospace;resize:none}#mpEl #mpCj{font:700 28px monospace;letter-spacing:8px;text-align:center;text-transform:uppercase;padding:8px 4px 8px 12px}#mpEl label{display:block;margin:10px 0 3px;color:#9fb0c8;font-size:12px}#mpEl .row{display:flex;gap:6px;margin-top:6px}#mpEl small{color:#9fb0c8}#mpCode{font:700 34px/1.2 monospace;letter-spacing:8px;text-align:center;background:#0b0f16;border:1px dashed #ffffff33;border-radius:10px;padding:10px 4px 10px 12px;color:#7dffb4;user-select:all}#mpChip{position:fixed;left:14px;top:14px;z-index:5;background:#000a;color:#7dffb4;padding:5px 11px;border-radius:20px;font:12px system-ui;display:none}`;document.head.appendChild(mpCss);
 const mpEl=document.createElement('div');mpEl.id='mpEl';
-mpEl.innerHTML='<h3><span class="dot" id="mpDot"></span>Multijugador local</h3><label style="margin-top:4px">Tu nombre</label><input id="mpN" maxlength="14" value="Jugador"><div class="tabs"><button id="mpTa" class="on">Crear sala</button><button id="mpTb">Unirme</button></div>'+
-'<div id="mpA"><label>1. Envía este código a tu amigo</label><textarea id="mpC1" rows="3" readonly placeholder="Pulsa Generar"></textarea><div class="row"><button id="mpG" style="flex:1">Generar</button><button id="mpK1">Copiar</button></div><label>2. Pega su respuesta</label><textarea id="mpC2" rows="3"></textarea><div class="row"><button id="mpP2">Pegar</button><button id="mpX" style="flex:1">Conectar</button></div></div>'+
-'<div id="mpB" style="display:none"><label>1. Pega el código del anfitrión</label><textarea id="mpC3" rows="3"></textarea><div class="row"><button id="mpP3">Pegar</button><button id="mpR" style="flex:1">Generar respuesta</button></div><label>2. Envía esta respuesta al anfitrión</label><textarea id="mpC4" rows="3" readonly></textarea><div class="row"><button id="mpK4" style="flex:1">Copiar</button></div></div>'+
-'<p id="mpS" style="margin:10px 0 0"><small>Ambos deben estar en la misma WiFi.</small></p><button id="mpD" style="display:none;width:100%;margin-top:8px">Desconectar</button>';
+mpEl.innerHTML=`<h3><span class="dot" id="mpDot"></span>Multijugador local</h3><label style="margin-top:4px">Tu nombre</label><input id="mpN" maxlength="14" value="Jugador"><div class="tabs"><button id="mpTa" class="on">Crear sala</button><button id="mpTb">Unirme</button><button id="mpTc" title="Sin internet">Manual</button></div>
+<div id="mpA"><label>Código de sala: díctaselo a tu amigo</label><div id="mpCode">· · · · ·</div><div class="row"><button id="mpG" style="flex:1">Crear sala</button><button id="mpK1">Copiar</button></div></div>
+<div id="mpB" style="display:none"><label>Escribe el código del anfitrión</label><input id="mpCj" maxlength="5" placeholder="XXXXX" autocomplete="off" spellcheck="false"><div class="row"><button id="mpR" style="flex:1">Unirme</button></div></div>
+<div id="mpM" style="display:none"><small>Solo si no hay internet: se intercambian dos códigos largos.</small><label>Anfitrión · 1. Envía este código</label><textarea id="mpC1" rows="2" readonly></textarea><div class="row"><button id="mpMg" style="flex:1">Generar</button><button id="mpMk1">Copiar</button></div><label>2. Pega su respuesta</label><textarea id="mpC2" rows="2"></textarea><div class="row"><button id="mpMp2">Pegar</button><button id="mpMx" style="flex:1">Conectar</button></div><label style="margin-top:14px">Invitado · 1. Pega el código del anfitrión</label><textarea id="mpC3" rows="2"></textarea><div class="row"><button id="mpMp3">Pegar</button><button id="mpMr" style="flex:1">Generar respuesta</button></div><label>2. Envía esta respuesta</label><textarea id="mpC4" rows="2" readonly></textarea><div class="row"><button id="mpMk4" style="flex:1">Copiar</button></div></div>
+<p id="mpS" style="margin:10px 0 0"><small>Ambos deben estar en la misma WiFi.</small></p><button id="mpD" style="display:none;width:100%;margin-top:8px">Desconectar</button>`;
 document.body.appendChild(mpEl);
+// escribir en el panel no debe activar teclas del juego (N, E, R, 1-4...); Esc sí pasa para poder reanudar
+['keydown','keyup'].forEach(t=>mpEl.addEventListener(t,e=>{if(e.code!=='Escape')e.stopPropagation()}));
 const mpChip=document.createElement('div');mpChip.id='mpChip';document.body.appendChild(mpChip);
 const mq=id=>document.getElementById(id);
 const mpSt=(t,k)=>{mq('mpS').innerHTML='<small>'+t+'</small>';mq('mpDot').className='dot '+(k||'')};
@@ -1057,22 +1079,58 @@ const mpIce=pc=>new Promise(r=>{if(pc.iceGatheringState==='complete')return r();
 const mpCopiar=id=>{const t=mq(id);t.select();(navigator.clipboard?navigator.clipboard.writeText(t.value):Promise.reject()).catch(()=>document.execCommand('copy')).then(()=>mpSt('Copiado ✓','w'))};
 const mpPegar=id=>navigator.clipboard.readText().then(t=>{mq(id).value=t.trim()},()=>mpSt('El navegador bloqueó el pegado: usa Ctrl+V'));
 const mpAv=makePlayer({shirt:0x00e5ff});mpAv.g.visible=false;
-let mpD=null,mpPc=null,mpR=null,mpT0=0,mpNom='Amigo',mpInt=0,mpTag=null;
+let mpD=null,mpPc=null,mpR=null,mpT0=0,mpNom='Amigo',mpInt=0,mpTag=null,mpEs=null;
 function mpEtiq(n){const c=document.createElement('canvas');c.width=256;c.height=64;const x=c.getContext('2d');x.fillStyle='#000b';x.fillRect(8,8,240,48);x.fillStyle='#fff';x.font='bold 30px system-ui';x.textAlign='center';x.fillText(n,128,44);
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));s.scale.set(2.6,.65,1);s.position.y=3.3;return s}
 function mpNombre(n){mpNom=n;if(mpTag)mpAv.g.remove(mpTag);mpTag=mpEtiq(n);mpAv.g.add(mpTag)}
 const mpSend=o=>{if(mpD&&mpD.readyState==='open')mpD.send(JSON.stringify(o))};
 function mpCanal(d){mpD=d;
-  d.onopen=()=>{mpSt('¡Conectado! Pulsa Esc para volver al juego.','ok');mq('mpD').style.display='block';mpSend({t:'h',n:mq('mpN').value||'Jugador'});mpChip.style.display='block';mpChip.textContent='● '+mpNom;mpInt=setInterval(()=>mpSend({t:'i',s:Date.now()}),2000)};
+  d.onopen=()=>{mpCerrarSig();mpSt('¡Conectado! Pulsa Esc para volver al juego.','ok');mq('mpD').style.display='block';mpSend({t:'h',n:mq('mpN').value||'Jugador'});mpChip.style.display='block';mpChip.textContent='● '+mpNom;mpInt=setInterval(()=>mpSend({t:'i',s:Date.now()}),2000)};
   d.onclose=()=>{clearInterval(mpInt);mpAv.g.visible=false;mpAv.g.userData.i=0;mpR=null;mpChip.style.display='none';mq('mpD').style.display='none';mpSt('Desconectado','')};
   d.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==='p')mpR=m;else if(m.t==='h')mpNombre(m.n);else if(m.t==='i')mpSend({t:'o',s:m.s});else if(m.t==='o')mpChip.textContent='● '+mpNom+' · '+(Date.now()-m.s)+' ms'}}
-const mpTab=a=>{mq('mpA').style.display=a?'':'none';mq('mpB').style.display=a?'none':'';mq('mpTa').className=a?'on':'';mq('mpTb').className=a?'':'on'};
-mq('mpTa').onclick=()=>mpTab(true);mq('mpTb').onclick=()=>mpTab(false);
-mq('mpK1').onclick=()=>mpCopiar('mpC1');mq('mpK4').onclick=()=>mpCopiar('mpC4');mq('mpP2').onclick=()=>mpPegar('mpC2');mq('mpP3').onclick=()=>mpPegar('mpC3');
-mq('mpG').onclick=async()=>{try{mpPc=new RTCPeerConnection({iceServers:[]});mpCanal(mpPc.createDataChannel('g'));await mpPc.setLocalDescription(await mpPc.createOffer());mpSt('Generando código...','w');await mpIce(mpPc);mq('mpC1').value=await mpEnc(JSON.stringify(mpPc.localDescription));mpSt('Envía el código a tu amigo y pega su respuesta abajo.','w')}catch(e){mpSt('Error: '+e.message)}};
-mq('mpX').onclick=async()=>{try{await mpPc.setRemoteDescription(JSON.parse(await mpDec(mq('mpC2').value)));mpSt('Conectando...','w')}catch(e){mpSt('Respuesta inválida. Si ya la usaste, genera la sala de nuevo.')}};
-mq('mpR').onclick=async()=>{try{const sd=JSON.parse(await mpDec(mq('mpC3').value));mpPc=new RTCPeerConnection({iceServers:[]});mpPc.ondatachannel=e=>mpCanal(e.channel);await mpPc.setRemoteDescription(sd);await mpPc.setLocalDescription(await mpPc.createAnswer());mpSt('Generando respuesta...','w');await mpIce(mpPc);mq('mpC4').value=await mpEnc(JSON.stringify(mpPc.localDescription));mpSt('Copia la respuesta y envíasela al anfitrión; se conectará solo.','w')}catch(e){mpSt('Código inválido: '+e.message)}};
-mq('mpD').onclick=()=>{if(mpD)mpD.close();if(mpPc)mpPc.close()};
+// --- pestañas ---
+const mpTab=k=>{['A','B','M'].forEach((x,i)=>{mq('mp'+x).style.display=(x===k)?'':'none'});mq('mpTa').className=k==='A'?'on':'';mq('mpTb').className=k==='B'?'on':'';mq('mpTc').className=k==='M'?'on':''};
+mq('mpTa').onclick=()=>mpTab('A');mq('mpTb').onclick=()=>mpTab('B');mq('mpTc').onclick=()=>mpTab('M');
+// --- conexión por código corto ---
+const mpAlfa='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin I, O, 0, 1 para no confundir
+const mpCodigo=()=>Array.from(crypto.getRandomValues(new Uint8Array(5)),b=>mpAlfa[b%mpAlfa.length]).join('');
+const mpUrl=c=>'https://ntfy.sh/c3d-'+c;
+const mpCerrarSig=()=>{if(mpEs){mpEs.close();mpEs=null}};
+const mpPub=(c,t)=>fetch(mpUrl(c),{method:'POST',body:t}).then(r=>{if(!r.ok)throw new Error('servicio de salas '+r.status)});
+function mpEscuchar(c,fn){mpCerrarSig();mpEs=new EventSource(mpUrl(c)+'/sse?since=all');
+  mpEs.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.event==='message')fn(m.message)}catch(_){}};
+  mpEs.onerror=()=>{if(!(mpD&&mpD.readyState==='open'))mpSt('Sin acceso al servicio de salas. Revisa tu internet o usa la pestaña Manual.')}}
+function mpNuevoPc(){ // prepara la conexión; si hay una a medias, la descarta
+  if(mpD&&mpD.readyState==='open')throw new Error('ya estás conectado, pulsa Desconectar');
+  mpCerrarSig();if(mpD){mpD.onopen=mpD.onclose=mpD.onmessage=null}if(mpPc)try{mpPc.close()}catch(_){}
+  const pc=new RTCPeerConnection({iceServers:[]});mpPc=pc;
+  pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed')mpSt('No se pudo conectar. Verifica que ambos estén en la misma WiFi.')};return pc}
+mq('mpG').onclick=async()=>{try{
+  const pc=mpNuevoPc(),c=mpCodigo();mq('mpCode').textContent=c;mpSt('Creando sala...','w');
+  mpCanal(pc.createDataChannel('g'));await pc.setLocalDescription(await pc.createOffer());await mpIce(pc);
+  mpEscuchar(c,async m=>{if(m.startsWith('a:')&&!pc.remoteDescription&&pc===mpPc){try{await pc.setRemoteDescription(JSON.parse(await mpDec(m.slice(2))));mpSt('Conectando...','w')}catch(e){mpSt('Respuesta inválida. Crea la sala de nuevo.')}}});
+  await mpPub(c,'o:'+await mpEnc(JSON.stringify(pc.localDescription)));
+  mpSt('Sala lista. Tu amigo debe elegir «Unirme» y escribir el código <b>'+c+'</b>.','w')
+}catch(e){mpSt('Error: '+e.message)}};
+mq('mpK1').onclick=()=>{const c=mq('mpCode').textContent.trim();if(c.length===5)(navigator.clipboard?navigator.clipboard.writeText(c):Promise.reject()).then(()=>mpSt('Código copiado ✓','w'),()=>mpSt('Copia el código a mano.','w'))};
+mq('mpCj').oninput=e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'')};
+mq('mpCj').onkeydown=e=>{if(e.key==='Enter')mq('mpR').click()};
+mq('mpR').onclick=async()=>{try{
+  const c=mq('mpCj').value.trim().toUpperCase();if(c.length<5)return mpSt('Escribe el código de 5 caracteres.');
+  mpNuevoPc();mpSt('Buscando la sala '+c+'...','w');let hecho=false;
+  mpEscuchar(c,async m=>{if(hecho||!m.startsWith('o:'))return;hecho=true;
+    try{const sd=JSON.parse(await mpDec(m.slice(2))),pc=mpNuevoPc();pc.ondatachannel=e=>mpCanal(e.channel);
+      await pc.setRemoteDescription(sd);await pc.setLocalDescription(await pc.createAnswer());mpSt('Conectando...','w');await mpIce(pc);
+      await mpPub(c,'a:'+await mpEnc(JSON.stringify(pc.localDescription)));mpSt('Conectando con el anfitrión...','w')
+    }catch(e){hecho=false;mpSt('Error: '+e.message)}});
+  setTimeout(()=>{if(!hecho)mpSt('No se encontró la sala. Revisa el código (o que el anfitrión la haya creado).')},7000)
+}catch(e){mpSt('Error: '+e.message)}};
+// --- modo manual (sin internet): el método anterior de dos códigos largos ---
+mq('mpMk1').onclick=()=>mpCopiar('mpC1');mq('mpMk4').onclick=()=>mpCopiar('mpC4');mq('mpMp2').onclick=()=>mpPegar('mpC2');mq('mpMp3').onclick=()=>mpPegar('mpC3');
+mq('mpMg').onclick=async()=>{try{const pc=mpNuevoPc();mpCanal(pc.createDataChannel('g'));await pc.setLocalDescription(await pc.createOffer());mpSt('Generando código...','w');await mpIce(pc);mq('mpC1').value=await mpEnc(JSON.stringify(pc.localDescription));mpSt('Envía el código a tu amigo y pega su respuesta abajo.','w')}catch(e){mpSt('Error: '+e.message)}};
+mq('mpMx').onclick=async()=>{try{await mpPc.setRemoteDescription(JSON.parse(await mpDec(mq('mpC2').value)));mpSt('Conectando...','w')}catch(e){mpSt('Respuesta inválida. Si ya la usaste, genera de nuevo.')}};
+mq('mpMr').onclick=async()=>{try{const sd=JSON.parse(await mpDec(mq('mpC3').value)),pc=mpNuevoPc();pc.ondatachannel=e=>mpCanal(e.channel);await pc.setRemoteDescription(sd);await pc.setLocalDescription(await pc.createAnswer());mpSt('Generando respuesta...','w');await mpIce(pc);mq('mpC4').value=await mpEnc(JSON.stringify(pc.localDescription));mpSt('Copia la respuesta y envíasela al anfitrión; se conectará solo.','w')}catch(e){mpSt('Código inválido: '+e.message)}};
+mq('mpD').onclick=()=>{mpCerrarSig();if(mpD)mpD.close();if(mpPc)mpPc.close()};
 mpNombre('Amigo');
 addEventListener('keydown',e=>{if(e.code==='KeyM'&&document.pointerLockElement)document.exitPointerLock()}); // M abre el panel
 function mpTick(){
